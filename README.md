@@ -80,6 +80,8 @@ source venv/bin/activate
 # venv\Scripts\activate
 ```
 
+**Note**: Always run scripts from the project root directory after activating the virtual environment.
+
 ### 2. Install Dependencies
 
 ```bash
@@ -144,6 +146,36 @@ The API will be available at:
 - **API**: http://localhost:8000
 - **Interactive Docs**: http://localhost:8000/docs
 - **ReDoc**: http://localhost:8000/redoc
+
+## Gmail Integration
+
+A standalone, production-ready Gmail API integration is available in the `integrations/` directory.
+
+### Quick Setup
+
+```bash
+# 1. Run the setup helper
+./setup_gmail.sh
+
+# 2. Or test directly
+python integrations/gmail_quickstart.py
+```
+
+### Usage Example
+
+```python
+from integrations.gmail import GmailClient
+
+client = GmailClient()
+client.authenticate()
+
+# Fetch important emails
+important = client.get_important_emails(max_results=10)
+for email in important:
+    print(f"{email['subject']} - {email['from']}")
+```
+
+**Full documentation**: See [integrations/README.md](integrations/README.md) and [integrations/GMAIL_SETUP.md](integrations/GMAIL_SETUP.md)
 
 ## API Endpoints
 
