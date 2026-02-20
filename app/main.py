@@ -3,7 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from datetime import datetime
 from app.config import get_settings
 from app.utils.logger import setup_logging, get_logger
-from app.api.routes import gmail, slack, toggl, ai
+from app.api.routes import gmail, slack, toggl, ai, productivity
 from app.models.schemas import HealthCheckResponse
 
 # Initialize logging
@@ -36,6 +36,7 @@ app.include_router(gmail.router, prefix="/api")
 app.include_router(slack.router, prefix="/api")
 app.include_router(toggl.router, prefix="/api")
 app.include_router(ai.router, prefix="/api")
+app.include_router(productivity.router, prefix="/api")
 
 
 @app.on_event("startup")

@@ -1,92 +1,104 @@
 import os
-from typing import Optional, List, Dict, Any
-from google.oauth2.credentials import Credentials
-from google_auth_oauthlib.flow import InstalledAppFlow
-from google.auth.transport.requests import Request
-from googleapiclient.discovery import build
-import pickle
+import sys
 from pathlib import Path
+from typing import Optional, List, Dict, Any
+
+# Add parent directory to path for imports
+sys.path.insert(0, str(Path(__file__).parent.parent.parent))
+
+from integrations.gmail import GmailClient, GmailAPIError, AuthenticationError
 from app.config import get_settings
 from app.utils.logger import get_logger
 
 logger = get_logger(__name__)
 
-# Gmail API scopes
-SCOPES = ['https://www.googleapis.com/auth/gmail.readonly',
-          'https://www.googleapis.com/auth/gmail.send',
-          'https://www.googleapis.com/auth/gmail.modify']
-
 
 class GmailService:
-    """Service for interacting with Gmail API."""
+    """Enhanced Gmail service using the production-ready Gmail integration."""
     
     def __init__(self):
         self.settings = get_settings()
-        self.creds: Optional[Credentials] = None
-        self.service = None
-        
-    def authenticate(self) -> bool:
-        """Authenticate with Gmail API."""
-        try:
-            creds_path = Path(self.settings.gmail_credentials_path)
-            
-            # Load existing credentials
-            if creds_path.exists():
-                with open(creds_path, 'rb') as token:
-                    self.creds = pickle.load(token)
-            
-            # Refresh or get new credentials
-            if not self.creds or not self.creds.valid:
-                if self.creds and self.creds.expired and self.creds.refresh_token:
-                    self.creds.refresh(Request())
-                else:
-                    # This would need OAuth flow setup
-                    logger.warning("No valid credentials found. OAuth flow needed.")
-                    return False
-                
-                # Save credentials
-                creds_path.parent.mkdir(parents=True, exist_ok=True)
-                with open(creds_path, 'wb') as token:
-                    pickle.dump(self.creds, token)
-            
-            self.service = build('gmail', 'v1', credentials=self.creds)
-            logger.info("Gmail authentication successful")
-            return True
-            
-        except Exception as e:
-            logger.error(f"Gmail authentication failed: {str(e)}")
-            return False
+        self.client = GmailClient(
+            credentials_file='credentials/gmail_credentials.json',
+            token_file='credentials/gmail_token.pickle'
+        )
+        self._authenticated = False
+    
+    def _ensure_authenticated(self):
+        """Ensure the client is authenticated."""
+        if not self._authenticated:
+            try:
+                self.client.authenticate()
+                self._authenticated = True
+                logger.info("Gmail service authenticated successfully")
+            except AuthenticationError as e:
+                logger.error(f"Gmail authentication failed: {str(e)}")
+                raise
+            except Exception as e:
+                logger.error(f"Unexpected authentication error: {str(e)}")
+                raise
     
     async def list_messages(self, max_results: int = 10, query: str = "") -> List[Dict[str, Any]]:
-        """List recent email messages."""
-        if not self.service:
-            self.authenticate()
+        """List email messages with optional query."""
+        self._ensure_authenticated()
         
         try:
-            results = self.service.users().messages().list(
-                userId='me', 
-                maxResults=max_results,
-                q=query
-            ).execute()
+            if query:
+                messages = self.client.search_emails(query, max_results)
+            else:
+                messages = self.client.get_unread_emails(max_results)
             
-            messages = results.get('messages', [])
             logger.info(f"Retrieved {len(messages)} messages")
             return messages
             
-        except Exception as e:
+        except GmailAPIError as e:
             logger.error(f"Failed to list messages: {str(e)}")
             raise
     
-    async def get_message(self, message_id: str) -> Dict[str, Any]:
-        """Get a specific email message."""
-        if not self.service:
-            self.authenticate()
+    async def get_important_emails(self, max_results: int = 10) -> List[Dict[str, Any]]:
+        """Get important emails."""
+        self._ensure_authenticated()
         
         try:
-            message = self.service.users().messages().get(
-                userId='me', 
-                id=message_id
-            ).execute()
+            messages = self.client.get_important_emails(max_results)
+            logger.info(f"Retrieved {len(messages)} important emails")
+            return messages
+        except GmailAPIError as e:
+            logger.error(f"Failed to get important emails: {str(e)}")
+            raise
+    
+    async def get_starred_emails(self, max_results: int = 10) -> List[Dict[str, Any]]:
+        """Get starred emails."""
+        self._ensure_authenticated()
+        
+        try:
+            messages = self.client.get_starred_emails(max_results)
+            logger.info(f"Retrieved {len(messages)} starred emails")
+            return messages
+        except GmailAPIError as e:
+            logger.error(f"Failed to get starred emails: {str(e)}")
+            raise
+    
+    async def get_unread_emails(self, max_results: int = 20) -> List[Dict[str, Any]]:
+        """Get unread emails."""
+        self._ensure_authenticated()
+        
+        try:
+            messages = self.client.get_unread_emails(max_results)
+            logger.info(f"Retrieved {len(messages)} unread emails")
+            return messages
+        except GmailAPIError as e:
+            logger.error(f"Failed to get unread emails: {str(e)}")
+            raise
+    
+    async def get_message(self, message_id: str) -> Dict[str, Any]:
+        """Get a specific email message by ID."""
+        self._ensure_authenticated()
+        
+        try:
+            message = self.client._get_message_details(message_id)
+            if not message:
+                raise GmailAPIError(f"Message {message_id} not found")
             
             logger.info(f"Retrieved message {message_id}")
             return message
@@ -95,29 +107,73 @@ class GmailService:
             logger.error(f"Failed to get message: {str(e)}")
             raise
     
-    async def send_message(self, to: str, subject: str, body: str) -> Dict[str, Any]:
+    async def send_message(
+        self, 
+        to: str, 
+        subject: str, 
+        body: str,
+        cc: Optional[str] = None,
+        attachments: Optional[List[str]] = None
+    ) -> Dict[str, Any]:
         """Send an email message."""
-        if not self.service:
-            self.authenticate()
+        self._ensure_authenticated()
         
         try:
-            from email.mime.text import MIMEText
-            import base64
-            
-            message = MIMEText(body)
-            message['to'] = to
-            message['subject'] = subject
-            
-            raw = base64.urlsafe_b64encode(message.as_bytes()).decode()
-            
-            sent_message = self.service.users().messages().send(
-                userId='me',
-                body={'raw': raw}
-            ).execute()
+            result = self.client.send_email(
+                to=to,
+                subject=subject,
+                body=body,
+                cc=cc,
+                attachments=attachments
+            )
             
             logger.info(f"Sent message to {to}")
-            return sent_message
+            return result
             
-        except Exception as e:
+        except GmailAPIError as e:
             logger.error(f"Failed to send message: {str(e)}")
+            raise
+    
+    async def get_profile(self) -> Dict[str, Any]:
+        """Get Gmail profile information."""
+        self._ensure_authenticated()
+        
+        try:
+            profile = self.client.get_profile()
+            logger.info(f"Retrieved profile for {profile.get('emailAddress')}")
+            return profile
+        except GmailAPIError as e:
+            logger.error(f"Failed to get profile: {str(e)}")
+            raise
+    
+    async def mark_as_read(self, message_id: str) -> bool:
+        """Mark an email as read."""
+        self._ensure_authenticated()
+        
+        try:
+            return self.client.mark_as_read(message_id)
+        except GmailAPIError as e:
+            logger.error(f"Failed to mark as read: {str(e)}")
+            raise
+    
+    async def mark_as_starred(self, message_id: str) -> bool:
+        """Star an email."""
+        self._ensure_authenticated()
+        
+        try:
+            return self.client.mark_as_starred(message_id)
+        except GmailAPIError as e:
+            logger.error(f"Failed to mark as starred: {str(e)}")
+            raise
+    
+    async def search_emails(self, query: str, max_results: int = 20) -> List[Dict[str, Any]]:
+        """Search emails with Gmail query syntax."""
+        self._ensure_authenticated()
+        
+        try:
+            messages = self.client.search_emails(query, max_results)
+            logger.info(f"Search '{query}' found {len(messages)} messages")
+            return messages
+        except GmailAPIError as e:
+            logger.error(f"Search failed: {str(e)}")
             raise
