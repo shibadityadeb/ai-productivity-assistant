@@ -1,4 +1,5 @@
 from typing import List, Dict, Any, Optional
+import os
 from anthropic import Anthropic
 from app.config import get_settings
 from app.utils.logger import get_logger
@@ -14,7 +15,9 @@ class ClaudeService:
         self.client: Optional[Anthropic] = None
         
         if self.settings.claude_api_key:
-            self.client = Anthropic(api_key=self.settings.claude_api_key)
+            # Initialize directly with API key to avoid proxy configuration issues
+            os.environ["ANTHROPIC_API_KEY"] = self.settings.claude_api_key
+            self.client = Anthropic()
     
     async def generate_response(
         self, 
