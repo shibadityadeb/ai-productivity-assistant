@@ -35,7 +35,7 @@ class Settings(BaseSettings):
     
     # Claude API
     claude_api_key: str = ""
-    claude_model: str = "claude-3-5-sonnet-20241022"
+    claude_model: str = "claude-3-haiku-20240307"
     
     # Gemini API
     gemini_api_key: str = ""
